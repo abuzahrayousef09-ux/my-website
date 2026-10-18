@@ -163,7 +163,7 @@ function route() {
   }
   window.scrollTo(0, 0);
   updateCabinBooking();
-  window.setTimeout(observeVisibleSections, 20);
+  window.setTimeout(() => { observeVisibleSections(); animatePrices(); }, 20);
 }
 
 let lastFocusedElement = null;
@@ -229,7 +229,56 @@ function observeVisibleSections() {
   });
 }
 
+const prefersReducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+// Give each child of a staggered group its index so CSS can cascade the reveal.
+function indexStaggerGroups() {
+  document.querySelectorAll(".stagger").forEach((group) => {
+    Array.from(group.children).forEach((child, index) => child.style.setProperty("--i", index));
+  });
+}
+
+// Count prices up from zero the first time their card is shown.
+let priceObserver = null;
+function animatePrices() {
+  const prices = Array.from(document.querySelectorAll(".page.on .price")).filter((p) => !p.dataset.counted);
+  if (!prices.length) return;
+  const run = (price) => {
+    price.dataset.counted = "1";
+    const node = Array.from(price.childNodes).find((n) => n.nodeType === Node.TEXT_NODE && n.textContent.trim());
+    if (!node) return;
+    const target = parseInt(node.textContent, 10);
+    if (!Number.isFinite(target) || prefersReducedMotion()) return;
+    const suffix = node.textContent.replace(/^\s*\d+/, "");
+    const start = performance.now();
+    const duration = 900;
+    const step = (now) => {
+      const t = Math.min(1, (now - start) / duration);
+      const eased = 1 - Math.pow(1 - t, 3);
+      node.textContent = Math.round(target * eased) + suffix;
+      if (t < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  };
+  if (!("IntersectionObserver" in window)) { prices.forEach(run); return; }
+  if (!priceObserver) {
+    priceObserver = new IntersectionObserver((entries, observer) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) { run(entry.target); observer.unobserve(entry.target); }
+      });
+    }, { threshold: 0.4 });
+  }
+  prices.forEach((price) => priceObserver.observe(price));
+}
+
+// Header picks up a shadow once the page is scrolled.
+const header = document.querySelector("header");
+const onScroll = () => header.classList.toggle("is-scrolled", window.scrollY > 12);
+window.addEventListener("scroll", onScroll, { passive: true });
+onScroll();
+
 document.querySelectorAll(".page .wrap").forEach((element) => element.classList.add("reveal"));
+indexStaggerGroups();
 document.querySelectorAll("img.zoom, img.gz, img.pimg, .dairy-photos img").forEach((image) => {
   if (image.closest("a, .card")) return;
   image.tabIndex = 0;
@@ -245,7 +294,15 @@ try {
   console.warn("Could not read the saved language.", error);
 }
 setLanguage(savedLanguage);
-$("lang").addEventListener("click", () => setLanguage(language() === "ar" ? "en" : "ar"));
+$("lang").addEventListener("click", () => {
+  const next = language() === "ar" ? "en" : "ar";
+  if (prefersReducedMotion()) { setLanguage(next); return; }
+  document.body.classList.remove("lang-switching");
+  void document.body.offsetWidth;
+  document.body.classList.add("lang-switching");
+  window.setTimeout(() => setLanguage(next), 160);
+  window.setTimeout(() => document.body.classList.remove("lang-switching"), 500);
+});
 
 ["nights", "guests", "meals"].forEach((id) => {
   $(id).addEventListener("input", updateCabinBooking);
